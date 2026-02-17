@@ -22,15 +22,19 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _login() async {
-    // Simplified login with email only check for demo
-    bool success = await _authService.login(_emailController.text, "dummy");
+    bool success = await _authService.login(
+        _emailController.text, _passwordController.text);
+
     if (success) {
-      _voiceService.speak("Login successful.");
+      await _voiceService.speak("Login successful.");
       if (mounted) Navigator.pushReplacementNamed(context, '/home');
     } else {
-      _voiceService.speak("Login failed. User not found.");
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Login Failed")));
+      await _voiceService
+          .speak("Login failed. User not found or incorrect password.");
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("Login Failed")));
+      }
     }
   }
 
