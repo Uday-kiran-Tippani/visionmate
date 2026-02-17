@@ -1,29 +1,49 @@
 workflows:
   android-workflow:
     name: Android Workflow
-    max_build_duration: 60
+    max_build_directory: 60
     instance_type: mac_mini_m1
     environment:
       flutter: stable
       groups:
-        - google_play # If you have key signing variables
+        - google_play
       vars:
+        # Match your package name here
         PACKAGE_NAME: "com.example.visionmate"
+    
+    # 1. Add Caching to speed up future builds
+    cache:
+      cache_paths:
+        - ~/.pub-cache
+        - ~/.gradle/caches
+
     scripts:
-      - name: Get Flutter packages
-        script: |
-          cd visionmate/mobile_app
-          flutter pub get
+      - name: Set up and Get packages
+        script: | 
+          # Ensure we are in the correct project folder
+          cd mobile_app
+          
+          # Clean old build files that might be stuck in cache
+          flutter clean
+          
+          # Use upgrade to force the latest compatible versions 
+          # based on your new pubspec.yaml
+          flutter pub upgrade
+          
       - name: Build Android APK
         script: |
-          cd visionmate/mobile_app
-          flutter build apk --release
+          cd mobile_app
+          # The --release flag is essential for production builds
+          flutter build apk --release --build-name=1.0.0 --build-number=1
+          
     artifacts:
-      - visionmate/mobile_app/build/app/outputs/flutter-apk/app-release.apk
+      # Ensure the path starts from the root of your repo
+      - mobile_app/build/app/outputs/flutter-apk/app-release.apk
+      
     publishing:
       email:
         recipients:
           - user@example.com
         notify:
           success: true
-          failure: false
+          failure: true # Changed to true so you get alerts if it fails
