@@ -112,8 +112,8 @@ class VisionService {
 
     try {
       // 1. Detect faces with ML Kit (fast)
-      final InputImage inputImage =
-          _convertCameraImageToInputImage(cameraImage);
+      final inputImage = _convertCameraImageToInputImage(cameraImage);
+
       if (inputImage == null) return null;
 
       final List<Face> faces = await _faceDetector.processImage(inputImage);
