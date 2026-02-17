@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/voice_service.dart';
 
 class NavigationScreen extends StatefulWidget {
@@ -13,16 +13,35 @@ class NavigationScreen extends StatefulWidget {
 class _NavigationScreenState extends State<NavigationScreen> {
   GoogleMapController? _mapController;
   final VoiceService _voiceService = VoiceService();
-
-  // Default to a central location (e.g., city center) if location not found
-  final LatLng _center = const LatLng(37.7749, -122.4194);
+  LatLng _initialPosition = const LatLng(37.7749, -122.4194); // Default
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _voiceService.speak(
-      "Navigation started. Showing your location on the map.",
-    );
+    _checkLocation();
+  }
+
+  void _checkLocation() async {
+    _voiceService.speak("Opening navigation. Getting your location.");
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+
+      if (mounted) {
+        setState(() {
+          _initialPosition = LatLng(position.latitude, position.longitude);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      _voiceService
+          .speak("I couldn't get your precise location. Showing default map.");
+    }
   }
 
   void _onMapCreated(GoogleMapController controller) {
@@ -33,12 +52,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Navigation")),
-      body: GoogleMap(
-        onMapCreated: _onMapCreated,
-        initialCameraPosition: CameraPosition(target: _center, zoom: 11.0),
-        myLocationEnabled: true,
-        myLocationButtonEnabled: true,
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : GoogleMap(
+              onMapCreated: _onMapCreated,
+              initialCameraPosition: CameraPosition(
+                target: _initialPosition,
+                zoom: 15.0,
+              ),
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+            ),
     );
   }
 }

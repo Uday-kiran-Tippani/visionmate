@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
 import '../services/vision_service.dart';
 import '../services/voice_service.dart';
 
@@ -15,6 +15,7 @@ class _CameraScreenState extends State<CameraScreen> {
   final VisionService _visionService = VisionService();
   final VoiceService _voiceService = VoiceService();
   bool _isDetecting = false;
+  String _debugLabel = "Initializing...";
 
   @override
   void initState() {
@@ -23,38 +24,60 @@ class _CameraScreenState extends State<CameraScreen> {
     _visionService.initialize();
   }
 
-  Future<void> _initializeCamera() async {
+  void _initializeCamera() async {
     final cameras = await availableCameras();
-    if (cameras.isEmpty) return;
+    final firstCamera = cameras.first;
 
-    _controller = CameraController(cameras[0], ResolutionPreset.medium);
+    _controller = CameraController(
+      firstCamera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+
     await _controller!.initialize();
+    if (!mounted) return;
 
-    if (mounted) {
-      setState(() {});
-      _startDetection();
-    }
-  }
+    setState(() {});
 
-  void _startDetection() {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-
-    _controller!.startImageStream((image) async {
-      if (_isDetecting) return;
-      _isDetecting = true;
-
-      try {
-        // Run detection (mock implementation in service for now)
-        // final results = await _visionService.runDetection(image);
-        // if (results.isNotEmpty) {
-        //   _voiceService.speak("Obstacle ahead");
-        // }
-      } catch (e) {
-        print(e);
-      } finally {
-        _isDetecting = false;
+    // Start streaming
+    _controller!.startImageStream((CameraImage image) {
+      if (!_isDetecting) {
+        _isDetecting = true;
+        _runDetection(image);
       }
     });
+  }
+
+  void _runDetection(CameraImage image) async {
+    // 1. Run Object Detection
+    List<String> detections = await _visionService.runObjectDetection(image);
+
+    // 2. Run Face Recognition (if person detected)
+    String? faceName;
+    if (detections.contains('person')) {
+      faceName = await _visionService.recognizeFace(image);
+    }
+
+    // 3. Update UI & Speak
+    if (mounted) {
+      setState(() {
+        _debugLabel = detections.join(", ");
+        if (faceName != null) _debugLabel += " ($faceName)";
+      });
+    }
+
+    // Smart speaking logic (debounce to avoid spam)
+    if (detections.isNotEmpty) {
+      // logic to avoid repeating same object every frame would go here
+      if (faceName != null) {
+        await _voiceService.speak("$faceName is in front of you.");
+      } else {
+        // Simple announcement for now
+        await _voiceService.speak("Detected ${detections.first}");
+      }
+    }
+
+    _isDetecting = false;
   }
 
   @override
@@ -77,18 +100,16 @@ class _CameraScreenState extends State<CameraScreen> {
           CameraPreview(_controller!),
           Positioned(
             bottom: 20,
-            left: 0,
-            right: 0,
-            child: Text(
-              "Scanning environment...",
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                backgroundColor: Colors.black.withOpacity(0.5),
-                fontSize: 20,
+            left: 20,
+            child: Container(
+              color: Colors.black54,
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                _debugLabel,
+                style: const TextStyle(color: Colors.white, fontSize: 24),
               ),
             ),
-          ),
+          )
         ],
       ),
     );

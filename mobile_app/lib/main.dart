@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'screens/onboarding_screen.dart';
+import 'screens/auth/login_screen.dart';
+import 'screens/auth/registration_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/camera_screen.dart';
 import 'screens/navigation_screen.dart';
+import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _requestPermissions();
-  runApp(const VisionMateApp());
+
+  final AuthService authService = AuthService();
+  final bool isLoggedIn = await authService.isLoggedIn();
+
+  runApp(VisionMateApp(isLoggedIn: isLoggedIn));
 }
 
 Future<void> _requestPermissions() async {
@@ -17,40 +23,33 @@ Future<void> _requestPermissions() async {
     Permission.microphone,
     Permission.location,
     Permission.speech,
-    Permission.storage, // For saving images/logs
+    Permission.contacts,
+    Permission.phone,
+    Permission.sms,
   ].request();
 }
 
 class VisionMateApp extends StatelessWidget {
-  const VisionMateApp({super.key});
+  final bool isLoggedIn;
+
+  const VisionMateApp({super.key, required this.isLoggedIn});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'VisionMate',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
         primaryColor: Colors.blueAccent,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        useMaterial3: true,
-        fontFamily: 'Roboto',
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 30),
-            textStyle: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-          ),
+        colorScheme: const ColorScheme.dark(
+          primary: Colors.blueAccent,
+          secondary: Colors.tealAccent,
         ),
       ),
-      initialRoute: '/onboarding',
+      home: isLoggedIn ? const HomeScreen() : const RegistrationScreen(),
       routes: {
-        '/onboarding': (context) => const OnboardingScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/register': (context) => const RegistrationScreen(),
         '/home': (context) => const HomeScreen(),
         '/camera': (context) => const CameraScreen(),
         '/navigation': (context) => const NavigationScreen(),

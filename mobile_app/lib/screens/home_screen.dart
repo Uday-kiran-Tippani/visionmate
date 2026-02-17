@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:visionmate/services/auth_service.dart';
 import '../services/voice_service.dart';
-import 'package:flutter/services.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,117 +11,102 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final VoiceService _voiceService = VoiceService();
-  String _statusText = "Listening for 'Hey Jarvis'...";
+  final AuthService _authService = AuthService();
+  String _statusText = "Listening for 'Jarvis'...";
+  String _userName = "User";
 
   @override
   void initState() {
     super.initState();
-    _voiceService.speak(
-      "You are now on the home screen. Double tap to activate voice commands.",
-    );
+    _loadUser();
+    _startListening();
   }
 
-  void _activateVoiceCommand() async {
-    HapticFeedback.mediumImpact();
+  void _loadUser() {
     setState(() {
-      _statusText = "Listening...";
+      _userName = _authService.currentUser?.name ?? "User";
     });
-
-    // Simulate listening logic
-    // In a real app, this would use the continuous listening from voice_service
-    await _voiceService.listen((result) {
-      if (result.isNotEmpty) {
-        setState(() {
-          _statusText = "Heard: $result";
-        });
-        _processCommand(result);
-      }
-    });
+    _greetUser();
   }
 
-  void _processCommand(String command) {
-    command = command.toLowerCase();
-    if (command.contains("time")) {
-      final time = TimeOfDay.now().format(context);
-      _voiceService.speak("The time is $time");
-    } else if (command.contains("obstacle") || command.contains("camera")) {
-      _voiceService.speak("Opening obstacle detection.");
-      // Navigate to generic camera screen (to be implemented)
-      // Navigator.pushNamed(context, '/camera');
-    } else {
-      _voiceService.speak(
-        "I heard $command, but I don't know how to do that yet.",
-      );
-    }
+  void _greetUser() async {
+    int hour = DateTime.now().hour;
+    String greeting = "Good morning";
+    if (hour > 12) greeting = "Good afternoon";
+    if (hour > 17) greeting = "Good evening";
 
-    setState(() {
-      _statusText = "Tap to speak";
-    });
+    await _voiceService.speak("$greeting $_userName. I am online.");
+  }
+
+  void _startListening() {
+    _voiceService.listenAndProcess();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("VisionMate Home")),
-      body: GestureDetector(
-        onDoubleTap: _activateVoiceCommand,
-        child: Container(
-          color: Colors.transparent, // Capture taps everywhere
-          width: double.infinity,
-          height: double.infinity,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.mic, size: 80, color: Colors.redAccent),
-              const SizedBox(height: 20),
-              Text(
-                _statusText,
-                style: const TextStyle(fontSize: 24),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 40),
-              Wrap(
-                spacing: 20,
-                runSpacing: 20,
-                alignment: WrapAlignment.center,
-                children: [
-                  _buildFeatureButton(
-                    Icons.visibility,
-                    "RefDetect",
-                    () => Navigator.pushNamed(context, '/camera'),
-                  ),
-                  _buildFeatureButton(
-                    Icons.navigation,
-                    "Nav",
-                    () => Navigator.pushNamed(context, '/navigation'),
-                  ),
-                  _buildFeatureButton(Icons.music_note, "Media", () {}),
-                  _buildFeatureButton(Icons.face, "Faces", () {}),
-                ],
-              ),
-            ],
+      appBar: AppBar(
+        title: const Text("VisionMate"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await _authService.logout();
+              if (mounted) Navigator.pushReplacementNamed(context, '/login');
+            },
+          )
+        ],
+      ),
+      body: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.mic, size: 80, color: Colors.blueAccent),
+          const SizedBox(height: 20),
+          Text(
+            _statusText,
+            style: const TextStyle(fontSize: 18, color: Colors.white70),
           ),
-        ),
+          const SizedBox(height: 40),
+          _buildGridButtons(),
+        ],
       ),
     );
   }
 
-  Widget _buildFeatureButton(
-    IconData icon,
-    String label,
-    VoidCallback onPressed,
-  ) {
-    return ElevatedButton(
-      style: ElevatedButton.styleFrom(
-        shape: const CircleBorder(),
-        padding: const EdgeInsets.all(24),
-      ),
-      onPressed: onPressed,
-      child: Column(
+  Widget _buildGridButtons() {
+    return Expanded(
+      child: GridView.count(
+        crossAxisCount: 2,
+        padding: const EdgeInsets.all(16),
         children: [
-          Icon(icon, size: 30),
-          Text(label, style: const TextStyle(fontSize: 12)),
+          _buildFeatureCard(Icons.camera_alt, "Vision",
+              () => Navigator.pushNamed(context, '/camera')),
+          _buildFeatureCard(Icons.navigation, "Navigation",
+              () => Navigator.pushNamed(context, '/navigation')),
+          _buildFeatureCard(Icons.phone, "Call",
+              () => _voiceService.speak("Say Call followed by name")),
+          _buildFeatureCard(Icons.mic, "Voice Command",
+              () => _voiceService.listenAndProcess()),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFeatureCard(IconData icon, String label, VoidCallback onTap) {
+    return Card(
+      color: Colors.grey[900],
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 50, color: Colors.tealAccent),
+            const SizedBox(height: 10),
+            Text(label,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
       ),
     );
   }
