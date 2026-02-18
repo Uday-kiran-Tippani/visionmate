@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:speech_to_text/speech_recognition_error.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:permission_handler/permission_handler.dart'; // Add this package to pubspec.yaml
 import 'command_service.dart';
 import 'auth_service.dart';
 
@@ -14,7 +13,9 @@ class VoiceService {
 
   bool _isListening = false;
   bool _isSpeaking = false;
+  bool _speechEnabled = false;
   bool _initialized = false;
+
   Function(String)? _onStatusChange;
   Function(String)? _onResult;
 
@@ -22,127 +23,94 @@ class VoiceService {
   factory VoiceService() => _instance;
   VoiceService._internal();
 
-  Future<void> init(
-      {Function(String)? onStatusChange, Function(String)? onResult}) async {
+  Future<void> init({
+    Function(String)? onStatusChange,
+    Function(String)? onResult,
+  }) async {
     _onStatusChange = onStatusChange;
     _onResult = onResult;
 
-    if (!_initialized) {
-      await _initTts();
-      await _initStt();
-      _initialized = true;
+    if (_initialized) return;
+
+    // 1. Request Permissions explicitly
+    await _requestPermissions();
+
+    // 2. Init TTS first
+    await _initTts();
+
+    // 3. Init STT
+    await _initStt();
+
+    _initialized = true;
+  }
+
+  Future<void> _requestPermissions() async {
+    var status = await Permission.microphone.status;
+    if (!status.isGranted) {
+      await Permission.microphone.request();
     }
   }
 
-  // Future<void> _initTts() async {
-  //   await _flutterTts.setLanguage("en-US");
-  //   await _flutterTts.setPitch(1.0);
-  //   await _flutterTts.setSpeechRate(0.5);
-
-  //   _flutterTts.setStartHandler(() => _isSpeaking = true);
-  //   _flutterTts.setCompletionHandler(() {
-  //     _isSpeaking = false;
-  //     // Restart listening after speaking finishes
-  //     startListening();
-  //   });
-  //   _flutterTts.setCancelHandler(() => _isSpeaking = false);
-
-  //   // Set voice based on preference
-  //   String? pref = await _authService.currentUser?.voicePreference;
-  //   if (pref == 'friday') {
-  //     // Try to find a female voice
-  //     // This is platform specific, simplified for now
-  //     // On Android, engines usually have "en-us-x-sfg" vs "en-us-x-iom" etc.
-  //     // We'll stick to default engine's default for now or iterate voices if needed.
-  //     // Expanding this cleanly requires listing voices.
-  //   }
-  // }
   Future<void> _initTts() async {
     await _flutterTts.setLanguage("en-US");
     await _flutterTts.setPitch(1.0);
     await _flutterTts.setSpeechRate(0.5);
 
-    _flutterTts.setStartHandler(() => _isSpeaking = true);
+    _flutterTts.setStartHandler(() {
+      _isSpeaking = true;
+      _speech.stop(); // Stop listening immediately when talking starts
+    });
+
     _flutterTts.setCompletionHandler(() {
       _isSpeaking = false;
-      // Restart listening after speaking finishes
-      startListening();
+      // Small delay to prevent the mic from picking up the end of the TTS audio
+      Future.delayed(Duration(milliseconds: 500), () => startListening());
     });
+
     _flutterTts.setCancelHandler(() => _isSpeaking = false);
-
-    // Set voice based on preference
-    String? pref = _authService.currentUser?.voicePreference ?? 'jarvis';
-
-    List<dynamic>? voices = await _flutterTts.getVoices;
-
-    if (voices != null && voices.isNotEmpty) {
-      // Android & iOS voice selection
-      // We'll pick first male/female available
-      String? selectedVoice;
-
-      if (pref == 'jarvis') {
-        selectedVoice = voices.firstWhere(
-          (v) =>
-              v.toString().toLowerCase().contains('male') ||
-              v.toString().toLowerCase().contains('en-us-x-sfg'),
-          orElse: () => voices.first,
-        );
-      } else if (pref == 'friday') {
-        selectedVoice = voices.firstWhere(
-          (v) =>
-              v.toString().toLowerCase().contains('female') ||
-              v.toString().toLowerCase().contains('en-us-x-iom'),
-          orElse: () => voices.first,
-        );
-      }
-
-      if (selectedVoice != null) {
-        await _flutterTts.setVoice({"name": selectedVoice, "locale": "en-US"});
-      }
-    }
   }
 
   Future<void> _initStt() async {
-    await _speech.initialize(
+    _speechEnabled = await _speech.initialize(
       onStatus: (status) {
         if (_onStatusChange != null) _onStatusChange!(status);
-        if (status == 'done' || status == 'notListening') {
+        print("STT Status: $status");
+
+        if (status == "done" || status == "notListening") {
           _isListening = false;
-          // Auto-restart if not speaking
+          // Only restart if we aren't currently speaking
           if (!_isSpeaking) {
-            // startListening(); // Be careful with loops
+            Future.delayed(
+                Duration(milliseconds: 1000), () => startListening());
           }
         }
       },
       onError: (error) {
-        print('STT Error: $error');
+        print("STT Error: $error");
         _isListening = false;
-        // If error is permanent, maybe stop. If transient, restart.
-        // For no match, we might want to prompt user.
-        if (!_isSpeaking) startListening();
+        // Restart on error to keep the app "always on" for blind users
+        Future.delayed(Duration(seconds: 2), () => startListening());
       },
     );
   }
 
   Future<void> speak(String text) async {
+    _isSpeaking = true;
     if (_isListening) {
       await _speech.stop();
       _isListening = false;
-    }
-    if (_isSpeaking) {
-      await _flutterTts.stop();
     }
     await _flutterTts.speak(text);
   }
 
   void startListening() async {
-    if (_isSpeaking) return;
-    if (_isListening) return;
+    if (!_speechEnabled || _isSpeaking || _isListening) return;
 
-    bool available = await _speech.initialize();
-    if (available) {
-      _isListening = true;
-      _speech.listen(
+    _isListening = true;
+
+    // Use a try-catch for the listen method
+    try {
+      await _speech.listen(
         onResult: (result) {
           if (_onResult != null) _onResult!(result.recognizedWords);
 
@@ -151,12 +119,15 @@ class VoiceService {
             _processCommand(result.recognizedWords);
           }
         },
-        listenFor: const Duration(seconds: 10),
-        pauseFor: const Duration(seconds: 3),
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 5),
         partialResults: true,
-        cancelOnError: false,
         listenMode: stt.ListenMode.dictation,
+        cancelOnError: false,
       );
+    } catch (e) {
+      _isListening = false;
+      print("Listen error: $e");
     }
   }
 
@@ -166,16 +137,15 @@ class VoiceService {
   }
 
   Future<void> _processCommand(String text) async {
-    if (text.trim().isEmpty) {
-      startListening();
-      return;
-    }
+    if (text.trim().isEmpty) return;
 
+    print("Processing: $text");
     String response = await _commandService.processCommand(text);
+
     if (response.isNotEmpty) {
       await speak(response);
     } else {
-      await speak("I didn't understand that. Please say it again.");
+      await speak("I didn't understand that.");
     }
   }
 }
