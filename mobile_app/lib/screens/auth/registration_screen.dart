@@ -15,6 +15,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
+  final _passwordController =
+      TextEditingController(); // Added password controller
   String _voicePreference = 'jarvis';
 
   final VoiceService _voiceService = VoiceService();
@@ -28,7 +30,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
 
   void _speakInstructions() async {
     await _voiceService.speak(
-        "Welcome to VisionMate. Please enter your name, phone number, and email. You can also choose my voice.");
+        "Welcome to VisionMate. Please enter your name, phone number, email, and password. You can also choose my voice.");
   }
 
   void _register() async {
@@ -40,11 +42,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         voicePreference: _voicePreference,
       );
 
-      await _authService.registerUser(
-          user, "password123"); // Dummy password for now
+      // Use actual password
+      await _authService.registerUser(user, _passwordController.text);
       await _voiceService.speak("Registration successful. Logging you in.");
 
       if (mounted) {
+        // Navigate to VoiceHomeScreen
         Navigator.pushReplacementNamed(context, '/home');
       }
     }
@@ -76,6 +79,12 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                 decoration: const InputDecoration(labelText: "Email"),
                 keyboardType: TextInputType.emailAddress,
                 validator: (val) => val!.isEmpty ? "Enter email" : null,
+              ),
+              TextFormField(
+                controller: _passwordController,
+                decoration: const InputDecoration(labelText: "Password"),
+                obscureText: true,
+                validator: (val) => val!.isEmpty ? "Enter password" : null,
               ),
               const SizedBox(height: 20),
               const Text("Select Voice Assistant:",

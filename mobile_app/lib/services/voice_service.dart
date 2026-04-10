@@ -1,134 +1,151 @@
+import 'dart:async';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'package:wakelock_plus/wakelock_plus.dart';
-import 'automation_service.dart';
-import 'knowledge_service.dart';
+import 'package:permission_handler/permission_handler.dart'; // Add this package to pubspec.yaml
+import 'command_service.dart';
+import 'auth_service.dart';
 
 class VoiceService {
   final FlutterTts _flutterTts = FlutterTts();
   final stt.SpeechToText _speech = stt.SpeechToText();
-  final AutomationService _automationService = AutomationService();
-  final KnowledgeService _knowledgeService = KnowledgeService();
+  final CommandService _commandService = CommandService();
+  final AuthService _authService = AuthService();
 
   bool _isListening = false;
   bool _isSpeaking = false;
-  // Simple wake word for now, can be improved with Porcupine or similar
-  final String _wakeWord = "jarvis";
+  bool _speechEnabled = false;
+  bool _initialized = false;
+
+  Function(String)? _onStatusChange;
+  Function(String)? _onResult;
 
   static final VoiceService _instance = VoiceService._internal();
   factory VoiceService() => _instance;
-  VoiceService._internal() {
-    _init();
+  VoiceService._internal();
+
+  Future<void> init({
+    Function(String)? onStatusChange,
+    Function(String)? onResult,
+  }) async {
+    _onStatusChange = onStatusChange;
+    _onResult = onResult;
+
+    if (_initialized) return;
+
+    // 1. Request Permissions explicitly
+    await _requestPermissions();
+
+    // 2. Init TTS first
+    await _initTts();
+
+    // 3. Init STT
+    await _initStt();
+
+    _initialized = true;
   }
 
-  void _init() async {
+  Future<void> _requestPermissions() async {
+    var status = await Permission.microphone.status;
+    if (!status.isGranted) {
+      await Permission.microphone.request();
+    }
+  }
+
+  Future<void> _initTts() async {
     await _flutterTts.setLanguage("en-US");
     await _flutterTts.setPitch(1.0);
     await _flutterTts.setSpeechRate(0.5);
 
-    _flutterTts.setStartHandler(() => _isSpeaking = true);
-    _flutterTts.setCompletionHandler(() => _isSpeaking = false);
-    _flutterTts.setCancelHandler(() => _isSpeaking = false);
+    _flutterTts.setStartHandler(() {
+      _isSpeaking = true;
+      _speech.stop(); // Stop listening immediately when talking starts
+    });
 
-    await WakelockPlus.enable(); // Keep screen on for continuous listening
+    _flutterTts.setCompletionHandler(() {
+      _isSpeaking = false;
+      // Small delay to prevent the mic from picking up the end of the TTS audio
+      Future.delayed(Duration(milliseconds: 500), () => startListening());
+    });
+
+    _flutterTts.setCancelHandler(() => _isSpeaking = false);
+  }
+
+  Future<void> _initStt() async {
+    _speechEnabled = await _speech.initialize(
+      onStatus: (status) {
+        if (_onStatusChange != null) _onStatusChange!(status);
+        print("STT Status: $status");
+
+        if (status == "done" || status == "notListening") {
+          _isListening = false;
+          // Only restart if we aren't currently speaking
+          if (!_isSpeaking) {
+            Future.delayed(
+                Duration(milliseconds: 1000), () => startListening());
+          }
+        }
+      },
+      onError: (error) {
+        print("STT Error: $error");
+        _isListening = false;
+        // Restart on error to keep the app "always on" for blind users
+        Future.delayed(Duration(seconds: 2), () => startListening());
+      },
+    );
   }
 
   Future<void> speak(String text) async {
-    if (_isSpeaking) await stopSpeaking();
+    _isSpeaking = true;
+    if (_isListening) {
+      await _speech.stop();
+      _isListening = false;
+    }
     await _flutterTts.speak(text);
   }
 
-  Future<void> stopSpeaking() async {
-    await _flutterTts.stop();
-    _isSpeaking = false;
-  }
+  void startListening() async {
+    if (!_speechEnabled || _isSpeaking || _isListening) return;
 
-  Future<void> listenAndProcess() async {
-    if (!_isListening) {
-      bool available = await _speech.initialize(
-        onStatus: (status) {
-          print('STT Status: $status');
-          if (status == 'done' || status == 'notListening') {
+    _isListening = true;
+
+    // Use a try-catch for the listen method
+    try {
+      await _speech.listen(
+        onResult: (result) {
+          if (_onResult != null) _onResult!(result.recognizedWords);
+
+          if (result.finalResult) {
             _isListening = false;
-            // Restart listening loop if needed
+            _processCommand(result.recognizedWords);
           }
         },
-        onError: (error) => print('STT Error: $error'),
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 5),
+        partialResults: true,
+        listenMode: stt.ListenMode.dictation,
+        cancelOnError: false,
       );
-
-      if (available) {
-        _isListening = true;
-        _speech.listen(
-          onResult: (val) {
-            if (val.finalResult) {
-              _processCommand(val.recognizedWords);
-            }
-          },
-          listenFor: const Duration(seconds: 10),
-          pauseFor: const Duration(seconds: 3),
-          partialResults: false,
-        );
-      }
-    }
-  }
-
-  void _processCommand(String command) async {
-    print("Command recognized: $command");
-    command = command.toLowerCase();
-
-    // 1. Wake word check (simplistic)
-    // if (!command.contains(_wakeWord)) return; // Uncomment to enforce wake word
-
-    if (command.contains("open")) {
-      // Extract app name? "open whatsapp"
-      if (command.contains("whatsapp")) {
-        await speak("Opening WhatsApp");
-        await _automationService.launchApp("com.whatsapp");
-      } else if (command.contains("youtube")) {
-        await speak("Opening YouTube");
-        await _automationService.launchApp("com.google.android.youtube");
-      }
-    } else if (command.contains("call")) {
-      // "Call Mom" -> extract name
-      String name = command.replaceAll("call", "").trim();
-      if (name.isNotEmpty) {
-        await speak("Calling $name");
-        try {
-          await _automationService.makeCall(name);
-        } catch (e) {
-          await speak("I couldn't find contact $name");
-        }
-      }
-    } else if (command.contains("navigate to") ||
-        command.contains("take me to")) {
-      String destination = command
-          .replaceAll("navigate to", "")
-          .replaceAll("take me to", "")
-          .trim();
-      if (destination.isNotEmpty) {
-        await speak("Starting navigation to $destination");
-        await _automationService.openGoogleMaps(destination);
-      } else {
-        await speak("Where would you like to go?");
-      }
-    } else if (command.contains("where is my")) {
-      // Object finding mode
-      await speak("Let's look for it.");
-      // This would trigger vision service mode switch in UI
-    } else if (command.contains("what is") || command.contains("who is")) {
-      await speak("Let me check that for you.");
-      String result = await _knowledgeService.queryWikipedia(command);
-      await speak(result);
-    } else if (command.contains("time")) {
-      await speak(
-          "The time is ${DateTime.now().hour}:${DateTime.now().minute}");
-    } else {
-      await speak("I didn't catch that command.");
+    } catch (e) {
+      _isListening = false;
+      print("Listen error: $e");
     }
   }
 
   void stopListening() {
     _speech.stop();
     _isListening = false;
+  }
+
+  Future<void> _processCommand(String text) async {
+    if (text.trim().isEmpty) return;
+
+    print("Processing: $text");
+    String response = await _commandService.processCommand(text);
+
+    if (response.isNotEmpty) {
+      await speak(response);
+    } else {
+      await speak("I didn't understand that.");
+    }
   }
 }

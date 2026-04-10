@@ -12,7 +12,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final VoiceService _voiceService = VoiceService();
   final AuthService _authService = AuthService();
-  String _statusText = "Listening for 'Jarvis'...";
+  final String _statusText = "Listening for 'Jarvis'...";
   String _userName = "User";
 
   @override

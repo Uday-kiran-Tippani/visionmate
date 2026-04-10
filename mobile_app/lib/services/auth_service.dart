@@ -1,44 +1,48 @@
 import 'dart:convert';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:crypto/crypto.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_model.dart';
+import 'database_helper.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
 
-  final FlutterSecureStorage _storage = const FlutterSecureStorage();
+  final DatabaseHelper _dbHelper = DatabaseHelper();
   User? _currentUser;
 
   User? get currentUser => _currentUser;
 
-  Future<bool> isLoggedIn() async {
-    String? userJson = await _storage.read(key: 'user_data');
-    if (userJson != null) {
-      _currentUser = User.fromJson(jsonDecode(userJson));
-      return true;
+  // Initialize session from SharedPreferences
+  Future<bool> checkSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? email = prefs.getString('user_email');
+    if (email != null) {
+      final userMap = await _dbHelper.getUser(email);
+      if (userMap != null) {
+        _currentUser = User.fromJson(userMap);
+        return true;
+      }
     }
     return false;
   }
 
   Future<void> registerUser(User user, String password) async {
-    // In a real app, this would send data to a backend.
-    // Here, we store locally for offline-first capability.
+    String passwordHash = _hashPassword(password);
+    await _dbHelper.insertUser(user, passwordHash);
     _currentUser = user;
-    await _storage.write(key: 'user_data', value: jsonEncode(user.toJson()));
-    await _storage.write(
-        key: 'auth_token',
-        value: 'dummy_token_${DateTime.now().millisecondsSinceEpoch}');
+    await _saveSession(user.email);
   }
 
   Future<bool> login(String email, String password) async {
-    // Mock login check
-    // In real app, verify against stored hash or backend
-    String? storedUserJson = await _storage.read(key: 'user_data');
-    if (storedUserJson != null) {
-      User storedUser = User.fromJson(jsonDecode(storedUserJson));
-      if (storedUser.email == email) {
-        _currentUser = storedUser;
+    final userMap = await _dbHelper.getUser(email);
+    if (userMap != null) {
+      String storedHash = userMap['passwordHash'];
+      String inputHash = _hashPassword(password);
+      if (storedHash == inputHash) {
+        _currentUser = User.fromJson(userMap);
+        await _saveSession(email);
         return true;
       }
     }
@@ -46,12 +50,19 @@ class AuthService {
   }
 
   Future<void> logout() async {
-    await _storage.delete(key: 'user_data');
-    await _storage.delete(key: 'auth_token');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('user_email');
     _currentUser = null;
   }
 
-  Future<String> getVoicePreference() async {
-    return _currentUser?.voicePreference ?? 'jarvis';
+  Future<void> _saveSession(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_email', email);
+  }
+
+  String _hashPassword(String password) {
+    var bytes = utf8.encode(password);
+    var digest = sha256.convert(bytes);
+    return digest.toString();
   }
 }
